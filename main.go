@@ -17,19 +17,20 @@ import (
 
 const (
 	VERSION   = "v0.9"
-	MAXTIME   = 30           // in seconds
-	CACHE_TTL = 60 * 60 * 24 // 1 day, in seconds
-	THRUPUT   = 30           // max number of goroutines per fetch request
+	MAXTIME   = 30             // in seconds
+	CACHE_TTL = 60 * 60 * 24   // 1 day, in seconds
+	THRUPUT   = 30             // max number of goroutines per fetch request
+	ADDR      = "0.0.0.0:9333" // server address
 )
 
 var (
-	reqId uint64 = 0 // Incrementing number of requests
+	reqId uint64 = 0 // Request counter
 )
 
 type Response struct {
-	url    string
-	status int
-	data   []byte
+	Url    string
+	Status int
+	Data   []byte
 }
 
 func main() {
@@ -83,42 +84,45 @@ func main() {
 	})
 
 	// Boot the server
-	log.Println("** Purl server", VERSION)
-	if err := http.ListenAndServe(":9333", m); err != nil {
+	log.Println("** Purl", VERSION, "http server listening on", ADDR)
+	if err := http.ListenAndServe(ADDR, m); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func httpFetch(urls []string, maxtime int) [][]byte { //[]*HttpResponse {
+func httpFetch(urls []string, maxtime int) []*Response {
 	n := len(urls)
 	if n == 0 {
 		return nil
 	}
 
-	log.Println("Purl", reqId)
+	log.Println("Purl req", reqId)
 	reqId++
+
+	responses := make([]*Response, n)
 
 	in := make(chan int)
 	go func() {
-		for i := range urls {
+		for i, url := range urls {
+			responses[i] = &Response{Url: url}
 			in <- i
 		}
 		close(in)
 	}()
 
 	timeout := time.Duration(time.Duration(maxtime) * time.Second)
-	transport := &httpclient.Transport{RequestTimeout: timeout}
+	// timeout := time.Duration(1000 * time.Millisecond)
+	transport := &httpclient.Transport{RequestTimeout: timeout} //, DisableKeepAlives: true}
 	client := &http.Client{Transport: transport}
-
-	// responses := make([]*HttpResponse, len(urls))
-	responses := make([][]byte, n)
-	var wg sync.WaitGroup
+	defer transport.Close()
 
 	// hrmm.. problem with the thruput is that we need to add more
 	// logic around overall timeouts.. could be maxtime+maxtime
+	var wg sync.WaitGroup
 	thruput := int(math.Min(float64(THRUPUT), float64(n)))
+
 	for i := 0; i < thruput; i++ {
-		log.Println("SCALE", i)
+		// log.Println("SCALE", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -126,18 +130,21 @@ func httpFetch(urls []string, maxtime int) [][]byte { //[]*HttpResponse {
 				url := urls[j]
 				log.Println("Fetching", j, url)
 
-				// TODO: .. pretty this up.. and
-				// return err messages..
 				req, _ := http.NewRequest("GET", url, nil)
 				resp, err := client.Do(req)
-				if err == nil {
-					defer resp.Body.Close()
-					d, err := ioutil.ReadAll(resp.Body)
-					if err == nil {
-						responses[j] = d
-					}
+				if err != nil {
+					log.Println("Http connect error for", url, "because:", err.Error())
+					break
 				}
-				// responses[j] = &HttpResponse{j, url, resp, err}
+				defer resp.Body.Close()
+
+				body, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					log.Println("Http GET error reading body for", url, "because:", err.Error())
+					break
+				}
+				responses[j].Status = resp.StatusCode
+				responses[j].Data = body
 			}
 		}()
 	}
@@ -145,27 +152,24 @@ func httpFetch(urls []string, maxtime int) [][]byte { //[]*HttpResponse {
 	return responses
 }
 
-func renderMsg(res http.ResponseWriter, status int, body interface{}) {
-	// todo.. think about the responses... 422/500 we know it'll be
-	// string.. 200 is always good stuff.. array of bytes type thing..
-
+func renderMsg(res http.ResponseWriter, status int, data interface{}) {
 	var out []byte
 	var mh codec.MsgpackHandle
 	enc := codec.NewEncoderBytes(&out, &mh)
 
 	// Typecast ahead of encoding
 	var err error
-	switch body.(type) {
+	switch data.(type) {
 	case string:
-		err = enc.Encode(body.(string))
+		err = enc.Encode(data.(string))
 	default:
-		err = enc.Encode(body)
+		err = enc.Encode(data)
 	}
 
 	if err != nil {
 		log.Println("Encoding error:", err.Error())
+		renderMsg(res, 500, err.Error())
 		return
-		// close connection.. todo...
 	}
 
 	res.Header().Set("Content-Type", "application/x-msgpack")
