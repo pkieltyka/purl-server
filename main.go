@@ -15,12 +15,16 @@ import (
 	// "runtime"
 )
 
+// TODO:
+// 1. review recovery mw
+// 2. log to file.. logger mw
+// 3. all app constants can be flags..
+
 const (
-	VERSION   = "v0.9"
-	MAXTIME   = 30             // in seconds
-	CACHE_TTL = 60 * 60 * 24   // 1 day, in seconds
-	THRUPUT   = 30             // max number of goroutines per fetch request
-	ADDR      = "0.0.0.0:9333" // server address
+	VERSION = "v0.9"
+	MAXTIME = 30             // in seconds
+	THRUPUT = 30             // max number of goroutines per fetch request
+	ADDR    = "0.0.0.0:9333" // server address
 )
 
 var (
@@ -65,10 +69,6 @@ func main() {
 		if maxtime == 0 {
 			maxtime = MAXTIME
 		}
-		ttl, _ := strconv.Atoi(req.Form.Get("ttl"))
-		if ttl == 0 {
-			ttl = CACHE_TTL
-		}
 		if len(urls) == 0 {
 			renderMsg(res, 422, "Url parameter required")
 			return
@@ -84,7 +84,9 @@ func main() {
 	})
 
 	// Boot the server
-	log.Println("** Purl", VERSION, "http server listening on", ADDR)
+	log.Println("** Purls", VERSION, "http server listening on", ADDR)
+	log.Println("** with thruput:", THRUPUT, "maxtime:", MAXTIME)
+
 	if err := http.ListenAndServe(ADDR, m); err != nil {
 		log.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func httpFetch(urls []string, maxtime int) []*Response {
 		return nil
 	}
 
-	log.Println("Purl req", reqId)
+	log.Println("Purls req", reqId)
 	reqId++
 
 	responses := make([]*Response, n)
@@ -111,18 +113,16 @@ func httpFetch(urls []string, maxtime int) []*Response {
 	}()
 
 	timeout := time.Duration(time.Duration(maxtime) * time.Second)
-	// timeout := time.Duration(1000 * time.Millisecond)
 	transport := &httpclient.Transport{RequestTimeout: timeout} //, DisableKeepAlives: true}
 	client := &http.Client{Transport: transport}
 	defer transport.Close()
 
 	// hrmm.. problem with the thruput is that we need to add more
-	// logic around overall timeouts.. could be maxtime+maxtime
+	// logic around overall timeouts.. could be maxtime+maxtime when n > thurput
 	var wg sync.WaitGroup
 	thruput := int(math.Min(float64(THRUPUT), float64(n)))
 
 	for i := 0; i < thruput; i++ {
-		// log.Println("SCALE", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

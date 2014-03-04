@@ -1,0 +1,4 @@
+gom 'github.com/codegangsta/inject'
+gom 'github.com/codegangsta/martini'
+gom 'github.com/mreiferson/go-httpclient'
+gom 'github.com/ugorji/go/codec'

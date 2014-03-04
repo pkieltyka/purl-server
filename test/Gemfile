@@ -1,0 +1,7 @@
+source 'https://rubygems.org'
+
+gem 'sinatra'
+gem 'msgpack', platform: :mri
+gem 'msgpack-jruby', platform: :jruby
+gem 'pry'
+gem 'pry-nav'
